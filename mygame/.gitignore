@@ -1,0 +1,23 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+.venv/
+
+# Generated assets (regenerate with `make assets`)
+generated_images/
+poker/assets/cards/*.png
+poker/assets/raw/
+poker/assets/table_bg.png
+poker/assets/title_bg.png
+poker/assets/chip_*.png
+poker/assets/preview_*.png
+
+# Build artifacts
+texasholdem.love
+
+# macOS
+.DS_Store
+
+# Claude Code
+.claude/
