@@ -7,7 +7,7 @@ function love.conf(t)
     t.window.resizable = true
     t.window.minwidth = 960
     t.window.minheight = 540
-    t.window.vsync = 0  -- disable vsync for 120Hz+ support
+    t.window.vsync = 1  -- enable vsync to prevent flickering
     t.modules.physics = false
     t.modules.video = false
 end

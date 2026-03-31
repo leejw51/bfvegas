@@ -116,7 +116,7 @@ local function roundRect(mode, x, y, w, h, r)
 end
 
 function Render.drawTable()
-    local W, H = love.graphics.getDimensions()
+    local W, H = 1280, 720  -- use design resolution (scaling handled by main.lua)
 
     if tableBgImage then
         -- Use Grok-generated table background
@@ -329,9 +329,9 @@ function Render.drawPlayer(player, idx, showCards, isCurrentTurn, isDealer)
         if idx == 1 then
             cardY = py + 45  -- below player info
         elseif idx == 3 then
-            cardY = py - CARD_H - 5  -- above for top
+            cardY = py + 45  -- below player info for top player (avoid going off-screen)
         else
-            cardY = py - CARD_H - 5  -- above for sides/top
+            cardY = py - CARD_H - 5  -- above for sides
         end
 
         local totalW = #player.hand * (CARD_W + CARD_SPACING) - CARD_SPACING
@@ -489,6 +489,21 @@ function Render.drawButtons(buttons)
     end
 end
 
+function Render.drawBackButton(hovered)
+    local bx, by, bw, bh = 10, 680, 120, 30
+    local col = hovered and C.btnHover or C.btnNormal
+    love.graphics.setColor(col)
+    roundRect("fill", bx, by, bw, bh, 6)
+    love.graphics.setColor(C.gold[1], C.gold[2], C.gold[3], 0.6)
+    love.graphics.setLineWidth(1)
+    roundRect("line", bx, by, bw, bh, 6)
+    love.graphics.setFont(fonts.small)
+    love.graphics.setColor(C.white)
+    love.graphics.printf("Back to Main", bx, by + bh/2 - 7, bw, "center")
+end
+
+Render.BACK_BTN = {x = 10, y = 680, w = 120, h = 30}
+
 function Render.drawRaiseControls(raiseAmount, minRaise, maxRaise, buttons)
     -- Raise amount display
     love.graphics.setFont(fonts.medium)
@@ -536,10 +551,10 @@ function Render.drawMessage(text, subtext, alpha, popScale)
 end
 
 function Render.drawHUD(dealerIdx, blinds, roundNum, phase)
-    love.graphics.setFont(fonts.small)
+    love.graphics.setFont(fonts.large)
     love.graphics.setColor(C.dimWhite)
     love.graphics.print("Round " .. roundNum, 10, 10)
-    love.graphics.print("Blinds: $" .. blinds.small .. " / $" .. blinds.big, 10, 28)
+    love.graphics.print("Blinds: $" .. blinds.small .. " / $" .. blinds.big, 10, 42)
 
     -- Phase indicator
     if phase then

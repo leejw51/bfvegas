@@ -65,6 +65,7 @@ function Game.init()
         lastRaiser = nil,
         winnersThisRound = {},
         humanActionNeeded = false,
+        backBtnHovered = false,
     }
 
     -- Create players
@@ -423,6 +424,10 @@ checkBettingRoundOver = function()
 end
 
 advancePhase = function()
+    -- Prevent multiple phase transitions in a single frame
+    if game.phaseChangedThisFrame then return end
+    game.phaseChangedThisFrame = true
+
     -- Check if only one player remains
     if countNonFolded() <= 1 then
         for i, p in ipairs(game.players) do
@@ -582,6 +587,9 @@ awardPot = function(winners)
 end
 
 function Game.update(dt)
+    -- Reset per-frame guards
+    game.phaseChangedThisFrame = false
+
     -- Update all animations/particles
     Easing.update(dt)
     Easing.updateParticles(dt)
@@ -796,6 +804,15 @@ end
 function Game.mousepressed(mx, my, button)
     if button ~= 1 then return end
 
+    -- Back to Main button (available during gameplay, not on menu)
+    if game.state ~= "menu" then
+        local bb = Render.BACK_BTN
+        if mx >= bb.x and mx <= bb.x + bb.w and my >= bb.y and my <= bb.y + bb.h then
+            game.state = "menu"
+            return
+        end
+    end
+
     -- Menu clicks
     if game.state == "menu" then
         local btnW, btnH = 260, 42
@@ -823,6 +840,8 @@ function Game.mousemoved(mx, my)
     for _, btn in ipairs(game.buttons) do
         btn.hovered = (btn.enabled and mx >= btn.x and mx <= btn.x + btn.w and my >= btn.y and my <= btn.y + btn.h)
     end
+    local bb = Render.BACK_BTN
+    game.backBtnHovered = (mx >= bb.x and mx <= bb.x + bb.w and my >= bb.y and my <= bb.y + bb.h)
 end
 
 function Game.handleButton(action)
@@ -950,12 +969,13 @@ function Game.draw()
         end
     end
 
-    -- Phase transition flash
-    local phaseFlash = 1.0 - Easing.getValue("phase_flash")
-    if phaseFlash > 0.01 then
-        love.graphics.setColor(1, 1, 1, phaseFlash * 0.15)
-        love.graphics.rectangle("fill", 0, 0, 1280, 720)
-    end
+    -- Back to Main button
+    local bb = Render.BACK_BTN
+    local backHovered = game.backBtnHovered or false
+    Render.drawBackButton(backHovered)
+
+    -- Phase transition flash (subtle, no white overlay to avoid flickering)
+    -- Removed: the white rectangle flash was causing visible flicker
 
     -- Draw particles
     Easing.drawParticles()
