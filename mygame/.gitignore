@@ -4,14 +4,10 @@ __pycache__/
 *.pyo
 .venv/
 
-# Generated assets (regenerate with `make assets`)
-generated_images/
-poker/assets/cards/*.png
+# Generated assets (regenerate with asset scripts)
 poker/assets/raw/
-poker/assets/table_bg.png
-poker/assets/title_bg.png
-poker/assets/chip_*.png
-poker/assets/preview_*.png
+poker/assets/avatars/raw/
+poker/assets/preview_*
 
 # Build artifacts
 texasholdem.love
