@@ -52,6 +52,79 @@ local useImageCards = false
 local tableBgImage = nil
 local titleBgImage = nil
 
+-- Avatar images: avatarImages["alice"] = love.Image
+local avatarImages = {}
+local avatarSpriteSheets = {}  -- sprite sheets for animation
+local AVATAR_SIZE = 128  -- size of each frame in sprite sheet
+local AVATAR_DISPLAY = 50  -- display size on screen
+local AVATAR_FRAMES = 4  -- number of animation frames
+
+-- Avatar animation state per player index
+-- Frame mapping: 0=neutral, 1=smile/call, 2=thinking/turn, 3=confident/raise
+local avatarAnimState = {}
+
+function Render.initAvatarAnim(playerIdx)
+    avatarAnimState[playerIdx] = {
+        fromFrame = 0,
+        toFrame = 0,
+        blend = 1.0,       -- 1.0 = fully showing toFrame
+        scale = 1.0,        -- current display scale
+        targetScale = 1.0,  -- target scale (zoom)
+        alpha = 1.0,        -- current alpha
+        targetAlpha = 1.0,  -- target alpha
+    }
+end
+
+function Render.triggerAvatarAnim(playerIdx, targetFrame)
+    local state = avatarAnimState[playerIdx]
+    if not state then return end
+    state.fromFrame = state.toFrame
+    state.toFrame = targetFrame
+    state.blend = 0.0  -- start blending
+
+    -- Zoom/alpha based on action type
+    if targetFrame == 2 then
+        -- Thinking: subtle zoom in
+        state.targetScale = 1.12
+        state.targetAlpha = 1.0
+    elseif targetFrame == 3 then
+        -- Raise/confident: big zoom in + full alpha
+        state.targetScale = 1.2
+        state.targetAlpha = 1.0
+    elseif targetFrame == 1 then
+        -- Call/check: slight pop
+        state.targetScale = 1.08
+        state.targetAlpha = 1.0
+    else
+        -- Neutral/fold: back to normal
+        state.targetScale = 1.0
+        state.targetAlpha = 0.85
+    end
+end
+
+function Render.updateAvatarAnims(dt)
+    for _, state in pairs(avatarAnimState) do
+        -- Blend between frames
+        if state.blend < 1.0 then
+            state.blend = math.min(1.0, state.blend + dt * 3.0)  -- ~0.33s blend
+        end
+        -- Smooth scale easing
+        local scaleDiff = state.targetScale - state.scale
+        state.scale = state.scale + scaleDiff * math.min(dt * 6.0, 1.0)
+        -- Smooth alpha easing
+        local alphaDiff = state.targetAlpha - state.alpha
+        state.alpha = state.alpha + alphaDiff * math.min(dt * 5.0, 1.0)
+
+        -- After action settles, ease back to neutral scale
+        if state.blend >= 1.0 and state.targetScale ~= 1.0 then
+            state.targetScale = state.targetScale + (1.0 - state.targetScale) * math.min(dt * 1.5, 1.0)
+            if math.abs(state.targetScale - 1.0) < 0.005 then
+                state.targetScale = 1.0
+            end
+        end
+    end
+end
+
 function Render.init()
     fonts.small = love.graphics.newFont(13)
     fonts.normal = love.graphics.newFont(16)
@@ -91,6 +164,24 @@ function Render.init()
         print("Loaded " .. loaded .. " card images (scale=" .. string.format("%.2f", cardImageScale) .. ")")
     else
         print("Card images not found (" .. loaded .. "/53), using programmatic rendering")
+    end
+
+    -- Load avatar images
+    local avatarNames = {"alice", "bob", "charlie", "you"}
+    for _, name in ipairs(avatarNames) do
+        local path = "assets/avatars/" .. name .. ".png"
+        if love.filesystem.getInfo(path) then
+            avatarImages[name] = love.graphics.newImage(path)
+            avatarImages[name]:setFilter("linear", "linear")
+            print("Loaded avatar: " .. name)
+        end
+        -- Load sprite sheet for animation
+        local spritePath = "assets/avatars/" .. name .. "_sprite.png"
+        if love.filesystem.getInfo(spritePath) then
+            avatarSpriteSheets[name] = love.graphics.newImage(spritePath)
+            avatarSpriteSheets[name]:setFilter("linear", "linear")
+            print("Loaded avatar sprite: " .. name)
+        end
     end
 
     -- Load table background
@@ -257,34 +348,110 @@ function Render.drawPlayer(player, idx, showCards, isCurrentTurn, isDealer)
 
     local px, py = pos.x, pos.y
     local isHuman = (idx == 1)
+    local boxW, boxH = 150, 80
 
     -- Current turn highlight with animated glow
     if isCurrentTurn and not player.folded then
         local time = love.timer.getTime()
         local pulse = 0.2 + 0.15 * math.sin(time * 4)
-        -- Outer glow
         love.graphics.setColor(C.gold[1], C.gold[2], C.gold[3], pulse * 0.5)
-        roundRect("fill", px - 82, py - 52, 164, 104, 14)
-        -- Inner highlight
+        roundRect("fill", px - boxW/2 - 7, py - boxH/2 - 7, boxW + 14, boxH + 14, 14)
         love.graphics.setColor(C.gold[1], C.gold[2], C.gold[3], pulse)
-        roundRect("fill", px - 75, py - 45, 150, 90, 10)
+        roundRect("fill", px - boxW/2, py - boxH/2, boxW, boxH, 10)
     end
 
     -- Player area background
     local bgAlpha = player.folded and 0.3 or 0.6
     love.graphics.setColor(0, 0, 0, bgAlpha)
-    roundRect("fill", px - 70, py - 40, 140, 80, 8)
+    roundRect("fill", px - boxW/2, py - boxH/2, boxW, boxH, 8)
+
+    -- Avatar
+    local avatarKey = string.lower(player.name)
+    local avatarImg = avatarImages[avatarKey]
+    local avatarSprite = avatarSpriteSheets[avatarKey]
+    local avSize = AVATAR_DISPLAY
+    local avX = px - boxW/2 + 5
+    local avY = py - avSize/2
+
+    if avatarSprite then
+        -- Event-driven animated avatar with crossfade, zoom, and alpha blending
+        local state = avatarAnimState[idx]
+        local baseScale = avSize / AVATAR_SIZE
+        local foldedAlpha = player.folded and 0.4 or 1
+        local animScale = state and state.scale or 1.0
+        local animAlpha = state and state.alpha or 1.0
+        local finalScale = baseScale * animScale
+        local finalAlpha = foldedAlpha * animAlpha
+
+        -- Apply zoom: scale around avatar center
+        local centerX = avX + avSize / 2
+        local centerY = avY + avSize / 2
+        local drawX = centerX - (AVATAR_SIZE * finalScale) / 2
+        local drawY = centerY - (AVATAR_SIZE * finalScale) / 2
+
+        if state and state.blend < 1.0 then
+            -- Crossfade: draw fromFrame fading out, toFrame fading in
+            local t = state.blend
+            local eased = t * t * (3 - 2 * t)  -- smoothstep
+
+            -- Draw fromFrame (fading out)
+            local fromQuad = love.graphics.newQuad(
+                state.fromFrame * AVATAR_SIZE, 0, AVATAR_SIZE, AVATAR_SIZE,
+                avatarSprite:getWidth(), avatarSprite:getHeight()
+            )
+            love.graphics.setColor(1, 1, 1, finalAlpha * (1 - eased))
+            love.graphics.draw(avatarSprite, fromQuad, drawX, drawY, 0, finalScale, finalScale)
+
+            -- Draw toFrame (fading in)
+            local toQuad = love.graphics.newQuad(
+                state.toFrame * AVATAR_SIZE, 0, AVATAR_SIZE, AVATAR_SIZE,
+                avatarSprite:getWidth(), avatarSprite:getHeight()
+            )
+            love.graphics.setColor(1, 1, 1, finalAlpha * eased)
+            love.graphics.draw(avatarSprite, toQuad, drawX, drawY, 0, finalScale, finalScale)
+        else
+            -- Static: show current frame
+            local frameIdx = state and state.toFrame or 0
+            local quad = love.graphics.newQuad(
+                frameIdx * AVATAR_SIZE, 0, AVATAR_SIZE, AVATAR_SIZE,
+                avatarSprite:getWidth(), avatarSprite:getHeight()
+            )
+            love.graphics.setColor(1, 1, 1, finalAlpha)
+            love.graphics.draw(avatarSprite, quad, drawX, drawY, 0, finalScale, finalScale)
+        end
+    elseif avatarImg then
+        -- Static avatar
+        local avScale = avSize / avatarImg:getWidth()
+        love.graphics.setColor(1, 1, 1, player.folded and 0.4 or 1)
+        love.graphics.draw(avatarImg, avX, avY, 0, avScale, avScale)
+    else
+        -- Fallback: colored circle
+        love.graphics.setColor(0.3, 0.3, 0.5, player.folded and 0.3 or 0.7)
+        love.graphics.circle("fill", avX + avSize/2, py, avSize/2 - 2)
+        love.graphics.setColor(C.gold[1], C.gold[2], C.gold[3], 0.5)
+        love.graphics.circle("line", avX + avSize/2, py, avSize/2 - 2)
+        -- Initial letter
+        love.graphics.setFont(fonts.medium)
+        love.graphics.setColor(C.white)
+        local initial = string.sub(player.name, 1, 1)
+        local tw = fonts.medium:getWidth(initial)
+        love.graphics.print(initial, avX + avSize/2 - tw/2, py - 10)
+    end
+
+    -- Text area (to the right of avatar)
+    local textX = avX + avSize + 5
+    local textW = boxW - avSize - 15
 
     -- Name
     love.graphics.setFont(fonts.normal)
     local nameColor = player.folded and C.dimWhite or C.white
     love.graphics.setColor(nameColor)
-    love.graphics.printf(player.name, px - 70, py - 36, 140, "center")
+    love.graphics.printf(player.name, textX, py - 30, textW, "center")
 
     -- Chips
     love.graphics.setColor(C.gold)
     love.graphics.setFont(fonts.small)
-    love.graphics.printf("$" .. player.chips, px - 70, py - 18, 140, "center")
+    love.graphics.printf("$" .. player.chips, textX, py - 12, textW, "center")
 
     -- Last action with pop animation
     if player.lastAction and not player.folded then
@@ -296,7 +463,7 @@ function Render.drawPlayer(player, idx, showCards, isCurrentTurn, isDealer)
         end
         love.graphics.setColor(actionColor)
         love.graphics.setFont(fonts.small)
-        love.graphics.printf(player.lastAction, px - 70, py, 140, "center")
+        love.graphics.printf(player.lastAction, textX, py + 4, textW, "center")
     end
 
     -- Folded indicator with fade
@@ -305,16 +472,16 @@ function Render.drawPlayer(player, idx, showCards, isCurrentTurn, isDealer)
         local fadeAlpha = 0.5 + 0.2 * math.sin(time * 2)
         love.graphics.setColor(0.6, 0.2, 0.2, fadeAlpha)
         love.graphics.setFont(fonts.small)
-        love.graphics.printf("FOLDED", px - 70, py + 14, 140, "center")
+        love.graphics.printf("FOLDED", textX, py + 4, textW, "center")
     end
 
     -- Dealer button
     if isDealer then
         local dx, dy
-        if idx == 1 then dx, dy = px + 80, py - 30
-        elseif idx == 2 then dx, dy = px + 80, py - 10
-        elseif idx == 3 then dx, dy = px + 80, py - 10
-        else dx, dy = px - 90, py - 10 end
+        if idx == 1 then dx, dy = px + boxW/2 + 10, py - 20
+        elseif idx == 2 then dx, dy = px + boxW/2 + 10, py
+        elseif idx == 3 then dx, dy = px + boxW/2 + 10, py
+        else dx, dy = px - boxW/2 - 15, py end
         love.graphics.setColor(C.gold)
         love.graphics.circle("fill", dx, dy, 12)
         love.graphics.setColor(C.black)
@@ -325,21 +492,40 @@ function Render.drawPlayer(player, idx, showCards, isCurrentTurn, isDealer)
 
     -- Cards
     if #player.hand > 0 and not player.folded then
-        local cardY
+        local cardScale = 0.7  -- smaller cards for AI players
+        local cw = CARD_W * cardScale
+        local ch = CARD_H * cardScale
+        local cardY, startX
+
         if idx == 1 then
-            cardY = py + 45  -- below player info
+            -- Human: below player info, full size
+            cardScale = 1.0
+            cw = CARD_W
+            ch = CARD_H
+            cardY = py + 45
+            local totalW = #player.hand * (cw + CARD_SPACING) - CARD_SPACING
+            startX = px - totalW / 2
+        elseif idx == 2 then
+            -- Left: cards to the right of info box
+            cardY = py - ch / 2
+            startX = px + 75
         elseif idx == 3 then
-            cardY = py + 45  -- below player info for top player (avoid going off-screen)
+            -- Top: cards below info box
+            cardY = py + 45
+            local totalW = #player.hand * (cw + CARD_SPACING * cardScale) - CARD_SPACING * cardScale
+            startX = px - totalW / 2
         else
-            cardY = py - CARD_H - 5  -- above for sides
+            -- Right: cards to the left of info box
+            cardY = py - ch / 2
+            local totalW = #player.hand * (cw + CARD_SPACING * cardScale) - CARD_SPACING * cardScale
+            startX = px - 75 - totalW
         end
 
-        local totalW = #player.hand * (CARD_W + CARD_SPACING) - CARD_SPACING
-        local startX = px - totalW / 2
         for i, card in ipairs(player.hand) do
-            local cx = startX + (i - 1) * (CARD_W + CARD_SPACING)
+            local spacing = (idx == 1) and CARD_SPACING or (CARD_SPACING * cardScale)
+            local cx = startX + (i - 1) * (cw + spacing)
             local faceUp = showCards or isHuman
-            Render.drawCard(card, cx, cardY, faceUp, 1.0)
+            Render.drawCard(card, cx, cardY, faceUp, cardScale)
         end
     end
 end
@@ -747,10 +933,22 @@ function Render.drawPlayerBet(player, idx)
     local pos = POSITIONS[idx]
     if not pos then return end
 
-    -- Position bet chips near center of table from player
-    local cx, cy = 640, 330
-    local bx = pos.x + (cx - pos.x) * 0.4
-    local by = pos.y + (cy - pos.y) * 0.4
+    -- Position bet chips between player and pot center
+    local cx, cy = 640, 300
+    local bx, by
+    if idx == 1 then
+        -- Bottom player: chips above
+        bx = pos.x
+        by = pos.y - 60
+    elseif idx == 3 then
+        -- Top player: chips well below (past the cards area)
+        bx = pos.x
+        by = pos.y + 130
+    else
+        -- Side players: chips towards center
+        bx = pos.x + (cx - pos.x) * 0.45
+        by = pos.y + (cy - pos.y) * 0.3
+    end
 
     -- Draw stacked chips based on bet amount
     local chipDefs = {

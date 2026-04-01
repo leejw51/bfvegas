@@ -86,6 +86,11 @@ function Game.init()
     game.players[4] = AI.createPlayer("Charlie", "balanced", 4)
 
     game.buttons = createButtons()
+
+    -- Init avatar animations for all players
+    for i = 1, 4 do
+        Render.initAvatarAnim(i)
+    end
 end
 
 function Game.getState()
@@ -136,23 +141,48 @@ local function spawnChipAnim(fromIdx, toCenter, amount)
     if not fromPos then return end
     local toX, toY = 640, 260  -- pot position
     local fX, fY = fromPos.x, fromPos.y
+    -- Adjust start position so chips don't overlap cards
+    if fromIdx == 3 then fY = fY + 130 end  -- top player: start below cards
     if not toCenter then
         -- Reverse: pot to player
         fX, fY, toX, toY = toX, toY, fX, fY
     end
+
+    -- Compute bezier control point: perpendicular offset for a nice curve
+    local midX = (fX + toX) / 2
+    local midY = (fY + toY) / 2
+    local dx = toX - fX
+    local dy = toY - fY
+    local dist = math.sqrt(dx * dx + dy * dy)
+    -- Perpendicular direction (normalized)
+    local perpX, perpY = 0, 0
+    if dist > 1 then
+        perpX = -dy / dist
+        perpY = dx / dist
+    end
+    -- Curve magnitude: larger for short distances, always visible
+    local curveMag = math.max(80, dist * 0.5)
+
     -- Spawn multiple chips with slight offsets
     local chipCount = math.min(math.ceil(amount / 20), 8)
     for i = 1, chipCount do
         local delay = (i - 1) * 0.06
-        local id = "chip_" .. love.timer.getTime() .. "_" .. i .. "_" .. math.random(1000)
+        -- Alternate curve direction and add randomness
+        local side = (i % 2 == 0) and 1 or -1
+        local curveAmount = curveMag * side * (0.7 + math.random() * 0.6)
+        local ctrlX = midX + perpX * curveAmount
+        local ctrlY = midY + perpY * curveAmount
+
         game.chipAnims[#game.chipAnims + 1] = {
             fromX = fX + (math.random() - 0.5) * 20,
-            fromY = fY,
+            fromY = fY + (math.random() - 0.5) * 10,
             toX = toX + (math.random() - 0.5) * 30,
             toY = toY + (math.random() - 0.5) * 10,
+            ctrlX = ctrlX + (math.random() - 0.5) * 20,
+            ctrlY = ctrlY + (math.random() - 0.5) * 20,
             delay = delay,
             elapsed = 0,
-            duration = 0.4 + math.random() * 0.15,
+            duration = 0.5 + math.random() * 0.2,
             amount = amount,
             active = true,
         }
@@ -366,9 +396,13 @@ processBet = function(playerIdx, action, amount)
         Easing.tween("fold_" .. playerIdx, 0.5, Easing.easeInExpo)
         -- Action label pop
         Easing.tween("action_" .. playerIdx, 0.4, Easing.easeOutBack)
+        -- Avatar: back to neutral
+        Render.triggerAvatarAnim(playerIdx, 0)
     elseif action == "check" then
         p.lastAction = "Check"
         Easing.tween("action_" .. playerIdx, 0.4, Easing.easeOutBack)
+        -- Avatar: smile
+        Render.triggerAvatarAnim(playerIdx, 1)
     elseif action == "call" then
         local toCall = math.min(game.currentBet - p.bet, p.chips)
         p.chips = p.chips - toCall
@@ -380,6 +414,8 @@ processBet = function(playerIdx, action, amount)
         spawnChipAnim(playerIdx, true, toCall)
         Easing.tween("action_" .. playerIdx, 0.4, Easing.easeOutBack)
         Easing.tween("pot_bump", 0.3, Easing.easeOutElastic)
+        -- Avatar: smile/call
+        Render.triggerAvatarAnim(playerIdx, 1)
     elseif action == "raise" then
         local totalBet = amount
         local additional = totalBet - p.bet
@@ -398,6 +434,8 @@ processBet = function(playerIdx, action, amount)
         if additional >= 100 then
             Easing.startShake(2, 0.15)
         end
+        -- Avatar: confident/raise
+        Render.triggerAvatarAnim(playerIdx, 3)
         -- Reset acted flags for others
         for i, _ in ipairs(game.players) do
             if i ~= playerIdx then
@@ -424,10 +462,6 @@ checkBettingRoundOver = function()
 end
 
 advancePhase = function()
-    -- Prevent multiple phase transitions in a single frame
-    if game.phaseChangedThisFrame then return end
-    game.phaseChangedThisFrame = true
-
     -- Check if only one player remains
     if countNonFolded() <= 1 then
         for i, p in ipairs(game.players) do
@@ -491,6 +525,8 @@ advanceToNextPlayer = function()
     if found then
         game.currentPlayerIdx = found
         game.aiTimer = 0
+        -- Avatar: thinking expression for the new active player
+        Render.triggerAvatarAnim(found, 2)
     else
         advancePhase()
     end
@@ -587,11 +623,9 @@ awardPot = function(winners)
 end
 
 function Game.update(dt)
-    -- Reset per-frame guards
-    game.phaseChangedThisFrame = false
-
     -- Update all animations/particles
     Easing.update(dt)
+    Render.updateAvatarAnims(dt)
     Easing.updateParticles(dt)
     Easing.updateShake(dt)
 
@@ -944,15 +978,15 @@ function Game.draw()
         end
     end
 
-    -- Draw flying chip animations
+    -- Draw flying chip animations (quadratic bezier curves)
     for _, ca in ipairs(game.chipAnims) do
         local t = (ca.elapsed - ca.delay) / ca.duration
         if t >= 0 and t <= 1 then
             local eased = Easing.easeOutCubic(t)
-            local cx = ca.fromX + (ca.toX - ca.fromX) * eased
-            local cy = ca.fromY + (ca.toY - ca.fromY) * eased
-            -- Arc: chips fly in a slight parabola
-            cy = cy - math.sin(eased * math.pi) * 40
+            -- Quadratic bezier: B(t) = (1-t)^2*P0 + 2*(1-t)*t*P1 + t^2*P2
+            local inv = 1 - eased
+            local cx = inv * inv * ca.fromX + 2 * inv * eased * ca.ctrlX + eased * eased * ca.toX
+            local cy = inv * inv * ca.fromY + 2 * inv * eased * ca.ctrlY + eased * eased * ca.toY
             -- Scale: start big, shrink slightly
             local s = 1.0 - eased * 0.3
             local alpha = 1.0 - eased * 0.3
