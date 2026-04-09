@@ -1,0 +1,194 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+jobs:
+  build-gui:
+    name: Build GUI (macOS)
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # ── Build .love package ──────────────────────────────────────────
+      - name: Build .love package
+        run: |
+          cd mygame/poker
+          zip -9 -r ../../texasholdem.love . \
+            -x "*.DS_Store" -x ".*" -x "__pycache__/*"
+
+      # ── Download official LÖVE and embed game ────────────────────────
+      - name: Package macOS app
+        run: |
+          curl -L -o love-macos.zip \
+            "https://github.com/love2d/love/releases/download/11.5/love-11.5-macos.zip"
+          unzip love-macos.zip -d love-macos
+          APP="love-macos/love.app"
+          cp texasholdem.love "$APP/Contents/Resources/game.love"
+          plutil -replace CFBundleName        -string "TexasHoldem"            "$APP/Contents/Info.plist"
+          plutil -replace CFBundleDisplayName -string "Texas Hold'em Poker"     "$APP/Contents/Info.plist"
+          plutil -replace CFBundleExecutable  -string "love"                    "$APP/Contents/Info.plist"
+          plutil -replace CFBundleIdentifier  -string "com.bfvegas.texasholdem" "$APP/Contents/Info.plist"
+          plutil -replace CFBundleShortVersionString -string "${{ github.ref_name }}" "$APP/Contents/Info.plist"
+          # Strip LOVE's "open .love" document handlers so the embedded game runs.
+          plutil -remove UTExportedTypeDeclarations "$APP/Contents/Info.plist" 2>/dev/null || true
+          plutil -remove CFBundleDocumentTypes      "$APP/Contents/Info.plist" 2>/dev/null || true
+          mv "$APP" "love-macos/TexasHoldem.app"
+
+      # ── Import certificate ────────────────────────────────────────────
+      - name: Import codesigning certificate
+        env:
+          P12_BASE64: ${{ secrets.MACOS_CERTIFICATE_P12_BASE64 }}
+          P12_PASSWORD: ${{ secrets.MACOS_CERTIFICATE_PASSWORD }}
+        run: |
+          echo "$P12_BASE64" | base64 --decode > "$RUNNER_TEMP/cert.p12"
+          KEYCHAIN_PATH="$RUNNER_TEMP/build.keychain-db"
+          KEYCHAIN_PASSWORD="$(openssl rand -base64 32)"
+          security create-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
+          security set-keychain-settings -lut 21600 "$KEYCHAIN_PATH"
+          security unlock-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
+          security import "$RUNNER_TEMP/cert.p12" \
+            -k "$KEYCHAIN_PATH" \
+            -P "$P12_PASSWORD" \
+            -T /usr/bin/codesign \
+            -T /usr/bin/security
+          security set-key-partition-list -S apple-tool:,apple:,codesign: \
+            -s -k "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
+          security list-keychains -d user -s "$KEYCHAIN_PATH" $(security list-keychains -d user | tr -d '"')
+          CERT_INFO=$(security find-identity -v -p codesigning "$KEYCHAIN_PATH" | grep "Developer ID Application" || true)
+          if [ -n "$CERT_INFO" ]; then
+            CERT_ID=$(echo "$CERT_INFO" | head -1 | awk -F'"' '{print $2}')
+            echo "APPLE_SIGNING_IDENTITY=$CERT_ID" >> $GITHUB_ENV
+          else
+            echo "::warning::No Developer ID Application certificate found, using ad-hoc signing"
+            echo "APPLE_SIGNING_IDENTITY=-" >> $GITHUB_ENV
+          fi
+
+      # ── Create entitlements for LuaJIT ─────────────────────────────────
+      - name: Create entitlements
+        run: |
+          /usr/libexec/PlistBuddy -c "Add :com.apple.security.cs.allow-jit bool true" entitlements.plist
+          /usr/libexec/PlistBuddy -c "Add :com.apple.security.cs.allow-unsigned-executable-memory bool true" entitlements.plist
+          /usr/libexec/PlistBuddy -c "Add :com.apple.security.cs.disable-library-validation bool true" entitlements.plist
+          echo "Entitlements:"
+          cat entitlements.plist
+
+      # ── Sign the .app bundle (frameworks first, then app) ─────────────
+      - name: Codesign macOS app
+        run: |
+          APP="love-macos/TexasHoldem.app"
+
+          # Sign all Mach-O binaries inside frameworks
+          find "$APP/Contents/Frameworks" -type f | while read f; do
+            if file "$f" | grep -q "Mach-O"; then
+              echo "Signing: $f"
+              codesign --force --options runtime \
+                --sign "$APPLE_SIGNING_IDENTITY" \
+                --entitlements entitlements.plist \
+                --timestamp "$f"
+            fi
+          done
+
+          # Sign framework bundles
+          find "$APP/Contents/Frameworks" -name "*.framework" -maxdepth 1 | while read f; do
+            echo "Signing framework: $f"
+            codesign --force --options runtime \
+              --sign "$APPLE_SIGNING_IDENTITY" \
+              --entitlements entitlements.plist \
+              --timestamp "$f"
+          done
+
+          # Sign the main executable
+          codesign --force --options runtime \
+            --sign "$APPLE_SIGNING_IDENTITY" \
+            --entitlements entitlements.plist \
+            --timestamp "$APP/Contents/MacOS/love"
+
+          # Sign the outer app bundle
+          codesign --force --options runtime \
+            --sign "$APPLE_SIGNING_IDENTITY" \
+            --entitlements entitlements.plist \
+            --timestamp "$APP"
+
+          echo "Signed TexasHoldem.app:"
+          codesign -dv --verbose=2 "$APP" 2>&1 | head -5
+          echo "Checking entitlements:"
+          codesign -d --entitlements - "$APP" 2>&1 | head -20
+          echo "Verifying signature..."
+          codesign --verify --deep --strict "$APP"
+
+      # ── Notarize ──────────────────────────────────────────────────────
+      - name: Notarize macOS app
+        env:
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
+          TEAM_ID: ${{ secrets.TEAM_ID }}
+        run: |
+          ditto -c -k --sequesterRsrc --keepParent \
+            "love-macos/TexasHoldem.app" "$RUNNER_TEMP/TexasHoldem-notarize.zip"
+          echo "Submitting TexasHoldem.app for notarization..."
+          xcrun notarytool submit "$RUNNER_TEMP/TexasHoldem-notarize.zip" \
+            --apple-id "$APPLE_ID" \
+            --password "$APPLE_APP_SPECIFIC_PASSWORD" \
+            --team-id "$TEAM_ID" \
+            --wait --timeout 10m
+          xcrun stapler staple "love-macos/TexasHoldem.app"
+
+      # ── Package as zip ────────────────────────────────────────────────
+      - name: Package macOS zip
+        run: |
+          mkdir -p release-gui
+          cd love-macos
+          ditto -c -k --sequesterRsrc --keepParent TexasHoldem.app ../release-gui/TexasHoldem-macos-arm64.zip
+
+      - name: Upload .love artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: texasholdem-love
+          path: texasholdem.love
+
+      - name: Upload macOS artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: TexasHoldem-macos-arm64
+          path: ./release-gui/
+
+      # ── Cleanup keychain ──────────────────────────────────────────────
+      - name: Cleanup keychain
+        if: always()
+        run: |
+          security delete-keychain "$RUNNER_TEMP/build.keychain-db" 2>/dev/null || true
+          rm -f "$RUNNER_TEMP/cert.p12"
+
+  release:
+    name: Create Release
+    needs: [build-gui]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
+      - name: Prepare release assets
+        run: |
+          mkdir -p release
+          for dir in artifacts/*/; do
+            cp "$dir"* release/ 2>/dev/null || true
+          done
+          cd release
+          sha256sum * > checksums.txt
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          generate_release_notes: true
+          files: |
+            release/*
