@@ -4,12 +4,13 @@
 local Game = require("game")
 local Render = require("render")
 local Quiz = require("quiz")
+local Cheatsheet = require("cheatsheet")
 
 -- Design resolution (all layout is based on this)
 local DESIGN_W = 1280
 local DESIGN_H = 720
 
--- App mode: "game" or "quiz"
+-- App mode: "game", "quiz", or "cheatsheet"
 local appMode = "game"
 
 -- Computed scale/offset for letterboxing
@@ -52,6 +53,12 @@ function love.update(dt)
             appMode = "game"
             Game.init()
         end
+    elseif appMode == "cheatsheet" then
+        Cheatsheet.update(dt)
+        if Cheatsheet.shouldGoBack() then
+            appMode = "game"
+            Game.init()
+        end
     else
         Game.update(dt)
     end
@@ -64,6 +71,8 @@ function love.draw()
 
     if appMode == "quiz" then
         Quiz.draw()
+    elseif appMode == "cheatsheet" then
+        Cheatsheet.draw()
     else
         Game.draw()
     end
@@ -104,6 +113,15 @@ function love.keypressed(key)
         return
     end
 
+    if appMode == "cheatsheet" then
+        local result = Cheatsheet.keypressed(key)
+        if result == "menu" then
+            appMode = "game"
+            Game.init()
+        end
+        return
+    end
+
     -- Game mode
     if key == "escape" then
         love.event.quit()
@@ -117,6 +135,11 @@ function love.keypressed(key)
             Quiz.init()
             return
         end
+        if key == "c" then
+            appMode = "cheatsheet"
+            Cheatsheet.init()
+            return
+        end
         if key == "1" or key == "return" or key == "space" then
             Game.keypressed("return")
             return
@@ -124,6 +147,11 @@ function love.keypressed(key)
         if key == "2" then
             appMode = "quiz"
             Quiz.init()
+            return
+        end
+        if key == "3" then
+            appMode = "cheatsheet"
+            Cheatsheet.init()
             return
         end
     end
@@ -139,19 +167,30 @@ function love.mousepressed(x, y, button)
         return
     end
 
+    if appMode == "cheatsheet" then
+        Cheatsheet.mousepressed(gx, gy, button)
+        return
+    end
+
     -- Check menu button clicks
     if Game.getState() == "menu" and button == 1 then
         local btnW, btnH = 260, 42
         local bx = 640 - btnW/2
-        -- "Play Poker" button at y = 720/2 + 120 = 480
-        if gx >= bx and gx <= bx + btnW and gy >= 480 and gy <= 480 + btnH then
+        -- "Play Poker" button at y = 360 + 110 = 470
+        if gx >= bx and gx <= bx + btnW and gy >= 470 and gy <= 470 + btnH then
             Game.keypressed("return")
             return
         end
-        -- "Learn Hands" button at y = 720/2 + 170 = 530
-        if gx >= bx and gx <= bx + btnW and gy >= 530 and gy <= 530 + btnH then
+        -- "Learn Hands" button at y = 360 + 160 = 520
+        if gx >= bx and gx <= bx + btnW and gy >= 520 and gy <= 520 + btnH then
             appMode = "quiz"
             Quiz.init()
+            return
+        end
+        -- "Cheatsheet" button at y = 360 + 210 = 570
+        if gx >= bx and gx <= bx + btnW and gy >= 570 and gy <= 570 + btnH then
+            appMode = "cheatsheet"
+            Cheatsheet.init()
             return
         end
     end
@@ -163,6 +202,10 @@ function love.mousemoved(x, y)
     local gx, gy = screenToGame(x, y)
     if appMode == "quiz" then
         Quiz.mousemoved(gx, gy)
+        return
+    end
+    if appMode == "cheatsheet" then
+        Cheatsheet.mousemoved(gx, gy)
         return
     end
     Game.mousemoved(gx, gy)

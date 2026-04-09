@@ -1,4 +1,4 @@
-.PHONY: run cards cards-grok compose assets-grok assets clean package help
+.PHONY: run cards cards-grok compose assets-grok cheatsheet-bg assets clean package help
 
 # Default target
 help:
@@ -10,6 +10,7 @@ help:
 	@echo "  make cards-grok   - Step 1: Generate raw card art via Grok API"
 	@echo "  make compose      - Step 2: Compose final cards with PIL"
 	@echo "  make assets-grok  - Generate table/title backgrounds via Grok API"
+	@echo "  make cheatsheet-bg - Generate cheatsheet background via Grok API"
 	@echo "  make assets       - Generate ALL assets (cards + backgrounds)"
 	@echo "  make package      - Package game as .love file"
 	@echo "  make clean        - Remove generated assets"
@@ -34,8 +35,12 @@ compose:
 assets-grok:
 	python3 generate_poker_assets.py
 
+# Generate cheatsheet background via Grok API (uses generate_image.py helpers)
+cheatsheet-bg:
+	python3 generate_cheatsheet_assets.py
+
 # Generate ALL assets
-assets: cards assets-grok
+assets: cards assets-grok cheatsheet-bg
 
 # Package as .love file
 package:
@@ -48,5 +53,6 @@ clean:
 	rm -rf poker/assets/raw/
 	rm -f poker/assets/table_bg.png
 	rm -f poker/assets/title_bg.png
+	rm -f poker/assets/cheatsheet_bg.png
 	rm -f poker/assets/chip_*.png
 	rm -f texasholdem.love

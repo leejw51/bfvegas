@@ -859,6 +859,12 @@ function Quiz.draw()
     love.graphics.pop()
 end
 
+-- Public: build a random 5-card example of a named hand type.
+-- Accepts any HAND_NAMES string (e.g. "Royal Flush", "Two Pair").
+function Quiz.buildHand(name)
+    return buildHand(name)
+end
+
 function Quiz.shouldGoBack()
     if quiz.goBack then
         quiz.goBack = false

@@ -851,8 +851,8 @@ function Game.mousepressed(mx, my, button)
     if game.state == "menu" then
         local btnW, btnH = 260, 42
         local bx = 640 - btnW/2
-        -- "Play Poker" button at y = 360 + 120 = 480
-        local by1 = 480
+        -- "Play Poker" button at y = 360 + 110 = 470
+        local by1 = 470
         if mx >= bx and mx <= bx + btnW and my >= by1 and my <= by1 + btnH then
             startNewRound()
             return
