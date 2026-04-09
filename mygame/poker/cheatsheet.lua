@@ -11,6 +11,19 @@ local Cheatsheet = {}
 -- Shuffle button rect (in design coordinates)
 local SHUFFLE_BTN = {x = 1280 - 170, y = 676, w = 140, h = 34}
 
+-- Zoom-view buttons (Random Shuffle / Sort) - laid out beneath the big cards
+local ZOOM_BTN_W = 200
+local ZOOM_BTN_H = 44
+local ZOOM_BTN_GAP = 30
+-- y is computed in draw based on card layout, but click hit-tests need a
+-- stable rect. Big cards are vertically centered, so this y is constant.
+local ZOOM_BTN_Y = 360 + (170 * 112 / 80) / 2 + 28  -- centerY + bigCardH/2 + 28
+
+-- Big card layout in zoom view (kept here so click-tests and draw agree)
+local BIG_CARD_W = 170
+local BIG_CARD_H = BIG_CARD_W * (112 / 80)
+local BIG_GAP = 20
+
 -- Layout constants shared between click-hit-testing and drawing
 local ROW_H = 58
 local TOP_Y = 96
@@ -32,6 +45,11 @@ local state = {
     exampleCards = nil,
     -- Per-row shuffle animation [1..#HANDS] → 0..1 (1 = settled)
     shuffleAnim = {},
+    -- In-zoom card view: per-card tween {rank, suit, slot, fromX, fromY, t, rotFrom}
+    zoomCardsView = nil,
+    zoomCardDur = 0.55,
+    zoomShuffleHovered = false,
+    zoomSortHovered = false,
 }
 
 -- Hand rankings (highest to lowest). Example cards are generated at
@@ -74,6 +92,101 @@ local function reshuffle()
     end
 end
 
+-- Compute target X,Y for a slot index (0-based) in the zoom view
+local function bigSlotXY(slot)
+    local W = 1280
+    local totalW = BIG_CARD_W * 5 + BIG_GAP * 4
+    local startX = (W - totalW) / 2
+    local centerY = 360
+    local x = startX + slot * (BIG_CARD_W + BIG_GAP)
+    local y = centerY - BIG_CARD_H / 2
+    return x, y
+end
+
+-- Read current displayed (x, y) for an in-zoom card given its tween state.
+local function zoomCardXY(c)
+    local tx, ty = bigSlotXY(c.slot)
+    if c.t >= 1 then return tx, ty end
+    local e = Easing.easeOutBack(math.max(0, c.t))
+    return c.fromX + (tx - c.fromX) * e, c.fromY + (ty - c.fromY) * e
+end
+
+-- Build a fresh zoom view from the current example for `idx`. If `flyIn`,
+-- the cards burst in from below; otherwise they keep their current displayed
+-- positions and animate to the new (possibly reordered) slots.
+local function rebuildZoomView(idx, flyIn)
+    local cards = state.exampleCards and state.exampleCards[idx] or {}
+    -- Snapshot existing displayed positions keyed by "rank,suit"
+    local snap = {}
+    if state.zoomCardsView and not flyIn then
+        for _, oc in ipairs(state.zoomCardsView) do
+            local x, y = zoomCardXY(oc)
+            snap[oc.rank .. "," .. oc.suit] = {x = x, y = y}
+        end
+    end
+
+    local view = {}
+    for j, c in ipairs(cards) do
+        local rank, suit = c[1], c[2]
+        local key = rank .. "," .. suit
+        local fromX, fromY, rotFrom
+        if flyIn or not snap[key] then
+            -- Burst in from below center, with a gentle random rotation.
+            local _, ty = bigSlotXY(j - 1)
+            local cx = 1280 / 2 + (math.random() - 0.5) * 280
+            fromX = cx - BIG_CARD_W / 2
+            fromY = ty + 360
+            rotFrom = (math.random() - 0.5) * math.pi
+        else
+            local s = snap[key]
+            fromX = s.x
+            fromY = s.y
+            rotFrom = (math.random() - 0.5) * 0.4
+        end
+        view[j] = {
+            rank = rank, suit = suit,
+            slot = j - 1,
+            fromX = fromX, fromY = fromY,
+            t = -((j - 1) * 0.06),
+            rotFrom = rotFrom,
+        }
+    end
+    state.zoomCardsView = view
+end
+
+-- Re-roll only the cards for the currently zoomed hand.
+local function shuffleZoomCards()
+    if not state.zoomedIdx then return end
+    local hand = HANDS[state.zoomedIdx]
+    if not hand then return end
+    local fresh = Quiz.buildHand(hand.name) or {}
+    local pairs5 = {}
+    for j, c in ipairs(fresh) do pairs5[j] = {c.rank, c.suit} end
+    state.exampleCards[state.zoomedIdx] = pairs5
+    rebuildZoomView(state.zoomedIdx, true)
+end
+
+-- Sort the zoomed cards by rank ascending (Aces low) so they're easy to read.
+local function sortZoomCards()
+    if not state.zoomedIdx then return end
+    local cards = state.exampleCards and state.exampleCards[state.zoomedIdx]
+    if not cards then return end
+    table.sort(cards, function(a, b)
+        if a[1] ~= b[1] then return a[1] < b[1] end
+        return a[2] < b[2]
+    end)
+    rebuildZoomView(state.zoomedIdx, false)
+end
+
+local function zoomBtnRects()
+    local W = 1280
+    local totalW = ZOOM_BTN_W * 2 + ZOOM_BTN_GAP
+    local startX = (W - totalW) / 2
+    return
+        {x = startX,                              y = ZOOM_BTN_Y, w = ZOOM_BTN_W, h = ZOOM_BTN_H},
+        {x = startX + ZOOM_BTN_W + ZOOM_BTN_GAP, y = ZOOM_BTN_Y, w = ZOOM_BTN_W, h = ZOOM_BTN_H}
+end
+
 function Cheatsheet.init()
     state.shouldBack = false
     state.backHovered = false
@@ -82,6 +195,9 @@ function Cheatsheet.init()
     state.zoomedIdx = nil
     state.zoomT = 0
     state.zoomDir = 1
+    state.zoomCardsView = nil
+    state.zoomShuffleHovered = false
+    state.zoomSortHovered = false
     reshuffle()
     if not state.loaded then
         state.loaded = true
@@ -116,6 +232,14 @@ function Cheatsheet.update(dt)
             state.shuffleAnim[i] = math.min(1, v + dt / 0.35)
         end
     end
+    -- Advance per-card zoom view tweens (staggered fly/sort animation)
+    if state.zoomCardsView then
+        for _, c in ipairs(state.zoomCardsView) do
+            if c.t < 1 then
+                c.t = math.min(1, c.t + dt / state.zoomCardDur)
+            end
+        end
+    end
 end
 
 local function startZoomOut()
@@ -131,8 +255,12 @@ function Cheatsheet.keypressed(key)
             startZoomOut()
             return
         end
-        if key == "r" or key == "s" then
-            reshuffle()
+        if key == "r" then
+            shuffleZoomCards()
+            return
+        end
+        if key == "s" or key == "o" then
+            sortZoomCards()
             return
         end
         return
@@ -164,14 +292,24 @@ end
 function Cheatsheet.mousepressed(mx, my, button)
     if button ~= 1 then return end
 
-    -- Shuffle button works in both list and zoom views
-    if inShuffleBtn(mx, my) then
+    -- Shuffle button (top-right) works only in list view
+    if not state.zoomedIdx and inShuffleBtn(mx, my) then
         reshuffle()
         return
     end
 
-    -- Clicking while zoomed: dismiss the zoom
+    -- Zoom view: check Random Shuffle / Sort buttons before dismissing
     if state.zoomedIdx then
+        local sb, ob = zoomBtnRects()
+        local function inR(r) return mx >= r.x and mx <= r.x + r.w and my >= r.y and my <= r.y + r.h end
+        if inR(sb) then
+            shuffleZoomCards()
+            return
+        end
+        if inR(ob) then
+            sortZoomCards()
+            return
+        end
         startZoomOut()
         return
     end
@@ -189,6 +327,7 @@ function Cheatsheet.mousepressed(mx, my, button)
             state.zoomedIdx = idx
             state.zoomT = 0
             state.zoomDir = 1
+            rebuildZoomView(idx, true)
         end
     end
 end
@@ -199,8 +338,13 @@ function Cheatsheet.mousemoved(mx, my)
     state.shuffleHovered = inShuffleBtn(mx, my)
     if state.zoomedIdx then
         state.hoveredRow = 0
+        local sb, ob = zoomBtnRects()
+        state.zoomShuffleHovered = mx >= sb.x and mx <= sb.x + sb.w and my >= sb.y and my <= sb.y + sb.h
+        state.zoomSortHovered = mx >= ob.x and mx <= ob.x + ob.w and my >= ob.y and my <= ob.y + ob.h
     else
         state.hoveredRow = rowAt(my)
+        state.zoomShuffleHovered = false
+        state.zoomSortHovered = false
     end
 end
 
@@ -336,51 +480,66 @@ function Cheatsheet.draw()
         love.graphics.setColor(0, 0, 0, 0.82 * eased)
         love.graphics.rectangle("fill", 0, 0, W, H)
 
-        -- Compute big-card layout
-        -- Final size: fit 5 cards across ~1100px, big and readable.
-        local bigCardW = 170
-        local bigCardH = bigCardW * (112 / 80)  -- preserve CARD_W:CARD_H ratio
-        local bigGap = 20
-        local totalW = bigCardW * 5 + bigGap * 4
-        local startX = (W - totalW) / 2
         local centerY = H / 2
-        local scaleFromImage = bigCardW / 80  -- Render.drawCard scale arg
+        local scaleFromImage = BIG_CARD_W / 80
 
-        -- Eased scale + slight fade-in
-        local s = eased  -- 0..1
         love.graphics.setColor(1, 1, 1, eased)
 
         -- Big title
         love.graphics.setFont(Render.getFont("xlarge"))
         love.graphics.setColor(C.gold[1], C.gold[2], C.gold[3], eased)
-        love.graphics.printf(hand.name, 0, centerY - bigCardH/2 - 80, W, "center")
+        love.graphics.printf(hand.name, 0, centerY - BIG_CARD_H/2 - 80, W, "center")
         love.graphics.setFont(Render.getFont("medium"))
         love.graphics.setColor(1, 1, 1, eased * 0.9)
-        love.graphics.printf(hand.desc, 0, centerY - bigCardH/2 - 34, W, "center")
+        love.graphics.printf(hand.desc, 0, centerY - BIG_CARD_H/2 - 34, W, "center")
 
-        -- Cards: each scaled from its individual center for a nice pop-in
-        local zoomCards = state.exampleCards and state.exampleCards[state.zoomedIdx] or {}
-        for j, c in ipairs(zoomCards) do
-            local cx = startX + (j - 1) * (bigCardW + bigGap)
-            local cy = centerY - bigCardH / 2
-            -- Stagger the ease per card for a cascading feel
-            local stagger = math.max(0, math.min(1, (state.zoomT - (j - 1) * 0.06) / (1 - 0.3)))
-            local cardEase = Easing.easeOutExpo(stagger)
-            local drawScale = scaleFromImage * cardEase
+        -- Per-card tweened layout (handles initial fly-in, shuffle and sort)
+        local view = state.zoomCardsView or {}
+        for _, c in ipairs(view) do
+            local tt = math.max(0, math.min(1, c.t))
+            local cardEase = Easing.easeOutBack(tt)
+            local tx, ty = bigSlotXY(c.slot)
+            local cx = c.fromX + (tx - c.fromX) * cardEase
+            local cy = c.fromY + (ty - c.fromY) * cardEase
+            local rot = c.rotFrom * (1 - cardEase)
+            local scaleMul = 0.4 + 0.6 * cardEase
+            local drawScale = scaleFromImage * scaleMul
             local drawW = 80 * drawScale
             local drawH = 112 * drawScale
-            local dx = cx + bigCardW/2 - drawW/2
-            local dy = cy + bigCardH/2 - drawH/2
-            love.graphics.setColor(1, 1, 1, cardEase)
-            Render.drawCard({rank = c[1], suit = c[2]}, dx, dy, true, drawScale)
+            love.graphics.push()
+            love.graphics.translate(cx + BIG_CARD_W/2, cy + BIG_CARD_H/2)
+            love.graphics.rotate(rot)
+            love.graphics.setColor(1, 1, 1, math.min(1, eased * (cardEase + 0.2)))
+            Render.drawCard({rank = c.rank, suit = c.suit}, -drawW/2, -drawH/2, true, drawScale)
+            love.graphics.pop()
         end
         love.graphics.setColor(1, 1, 1, 1)
+
+        -- Random Shuffle / Sort buttons (only meaningful once zoom-in completes)
+        local btnAlpha = eased
+        local sb, ob = zoomBtnRects()
+        local function drawZoomBtn(r, label, hovered)
+            if hovered then
+                love.graphics.setColor(C.gold[1], C.gold[2], C.gold[3], 0.4 * btnAlpha)
+                love.graphics.rectangle("fill", r.x - 3, r.y - 3, r.w + 6, r.h + 6, 8, 8)
+            end
+            love.graphics.setColor(0.1, 0.1, 0.12, 0.92 * btnAlpha)
+            love.graphics.rectangle("fill", r.x, r.y, r.w, r.h, 8, 8)
+            love.graphics.setColor(C.gold[1], C.gold[2], C.gold[3], btnAlpha)
+            love.graphics.setLineWidth(hovered and 2.4 or 1.6)
+            love.graphics.rectangle("line", r.x, r.y, r.w, r.h, 8, 8)
+            love.graphics.setFont(Render.getFont("medium"))
+            love.graphics.setColor(1, 1, 1, btnAlpha)
+            love.graphics.printf(label, r.x, r.y + r.h/2 - 12, r.w, "center")
+        end
+        drawZoomBtn(sb, "Random Shuffle [R]", state.zoomShuffleHovered)
+        drawZoomBtn(ob, "Sort [S]",           state.zoomSortHovered)
 
         -- Dismiss hint
         love.graphics.setFont(Render.getFont("small"))
         love.graphics.setColor(C.dimWhite[1], C.dimWhite[2], C.dimWhite[3], eased)
-        love.graphics.printf("Click anywhere or press [ESC] to return",
-            0, centerY + bigCardH/2 + 30, W, "center")
+        love.graphics.printf("Press [ESC] to return — click empty space dismisses too",
+            0, ZOOM_BTN_Y + ZOOM_BTN_H + 14, W, "center")
     end
 
     -- Back button (reuse Render.BACK_BTN layout)

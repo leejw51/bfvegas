@@ -5,6 +5,7 @@ local Game = require("game")
 local Render = require("render")
 local Quiz = require("quiz")
 local Cheatsheet = require("cheatsheet")
+local AllCards = require("allcards")
 
 -- Design resolution (all layout is based on this)
 local DESIGN_W = 1280
@@ -59,6 +60,12 @@ function love.update(dt)
             appMode = "game"
             Game.init()
         end
+    elseif appMode == "allcards" then
+        AllCards.update(dt)
+        if AllCards.shouldGoBack() then
+            appMode = "game"
+            Game.init()
+        end
     else
         Game.update(dt)
     end
@@ -73,6 +80,8 @@ function love.draw()
         Quiz.draw()
     elseif appMode == "cheatsheet" then
         Cheatsheet.draw()
+    elseif appMode == "allcards" then
+        AllCards.draw()
     else
         Game.draw()
     end
@@ -122,6 +131,15 @@ function love.keypressed(key)
         return
     end
 
+    if appMode == "allcards" then
+        local result = AllCards.keypressed(key)
+        if result == "menu" then
+            appMode = "game"
+            Game.init()
+        end
+        return
+    end
+
     -- Game mode
     if key == "escape" then
         love.event.quit()
@@ -154,6 +172,11 @@ function love.keypressed(key)
             Cheatsheet.init()
             return
         end
+        if key == "a" or key == "4" then
+            appMode = "allcards"
+            AllCards.init()
+            return
+        end
     end
 
     Game.keypressed(key)
@@ -172,25 +195,36 @@ function love.mousepressed(x, y, button)
         return
     end
 
+    if appMode == "allcards" then
+        AllCards.mousepressed(gx, gy, button)
+        return
+    end
+
     -- Check menu button clicks
     if Game.getState() == "menu" and button == 1 then
         local btnW, btnH = 260, 42
         local bx = 640 - btnW/2
-        -- "Play Poker" button at y = 360 + 110 = 470
-        if gx >= bx and gx <= bx + btnW and gy >= 470 and gy <= 470 + btnH then
+        -- "Play Poker" button at y = 360 + 100 = 460
+        if gx >= bx and gx <= bx + btnW and gy >= 460 and gy <= 460 + btnH then
             Game.keypressed("return")
             return
         end
-        -- "Learn Hands" button at y = 360 + 160 = 520
-        if gx >= bx and gx <= bx + btnW and gy >= 520 and gy <= 520 + btnH then
+        -- "Learn Hands" button at y = 360 + 145 = 505
+        if gx >= bx and gx <= bx + btnW and gy >= 505 and gy <= 505 + btnH then
             appMode = "quiz"
             Quiz.init()
             return
         end
-        -- "Cheatsheet" button at y = 360 + 210 = 570
-        if gx >= bx and gx <= bx + btnW and gy >= 570 and gy <= 570 + btnH then
+        -- "Cheatsheet" button at y = 360 + 190 = 550
+        if gx >= bx and gx <= bx + btnW and gy >= 550 and gy <= 550 + btnH then
             appMode = "cheatsheet"
             Cheatsheet.init()
+            return
+        end
+        -- "All Cards" button at y = 360 + 235 = 595
+        if gx >= bx and gx <= bx + btnW and gy >= 595 and gy <= 595 + btnH then
+            appMode = "allcards"
+            AllCards.init()
             return
         end
     end
@@ -206,6 +240,10 @@ function love.mousemoved(x, y)
     end
     if appMode == "cheatsheet" then
         Cheatsheet.mousemoved(gx, gy)
+        return
+    end
+    if appMode == "allcards" then
+        AllCards.mousemoved(gx, gy)
         return
     end
     Game.mousemoved(gx, gy)

@@ -799,9 +799,10 @@ function Render.drawMenu()
 
     -- Menu buttons
     local menuBtns = {
-        {text = "Play Poker",  key = "ENTER", y = H/2 + 110},
-        {text = "Learn Hands", key = "L",     y = H/2 + 160},
-        {text = "Cheatsheet",  key = "C",     y = H/2 + 210},
+        {text = "Play Poker",  key = "ENTER", y = H/2 + 100},
+        {text = "Learn Hands", key = "L",     y = H/2 + 145},
+        {text = "Cheatsheet",  key = "C",     y = H/2 + 190},
+        {text = "All Cards",   key = "A",     y = H/2 + 235},
     }
     for _, mb in ipairs(menuBtns) do
         local btnW, btnH = 260, 42
