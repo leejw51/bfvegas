@@ -11,7 +11,7 @@ crate-type = ["cdylib", "rlib"]
 ureq = { version = "2", features = ["json", "tls"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
-printpdf = "0.7"
+printpdf = { version = "0.7", features = ["embedded_images"] }
 
 [profile.release]
 opt-level = 3

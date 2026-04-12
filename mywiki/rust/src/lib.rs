@@ -21,7 +21,7 @@ use std::path::{Path, PathBuf};
 use serde::Deserialize;
 use serde_json::{json, Value};
 
-use printpdf::{BuiltinFont, Mm, PdfDocument};
+use printpdf::{BuiltinFont, Image, ImageTransform, Mm, PdfDocument, PdfLayerReference};
 
 const CHAT_URL: &str = "https://api.x.ai/v1/responses";
 const IMAGE_URL: &str = "https://api.x.ai/v1/images/generations";
@@ -293,6 +293,48 @@ fn export_jsonl(nodes: &[ExportNode], out: &Path) -> Result<(), String> {
     fs::write(out, s).map_err(|e| format!("write: {e}"))
 }
 
+fn embed_png(layer: &PdfLayerReference, path: &str, x: Mm, top_y: Mm, max_w_mm: f32) -> Option<f32> {
+    use printpdf::image_crate::io::Reader as ImageReader;
+    let abs = std::env::current_dir()
+        .map(|c| c.join(path))
+        .unwrap_or_else(|_| PathBuf::from(path));
+    eprintln!("[export_pdf] embed image: {} (abs={:?}, exists={})",
+        path, abs, abs.exists());
+    let reader = match ImageReader::open(&abs) {
+        Ok(r) => r,
+        Err(e) => { eprintln!("[export_pdf] open fail: {e}"); return None; }
+    };
+    let reader = match reader.with_guessed_format() {
+        Ok(r) => r,
+        Err(e) => { eprintln!("[export_pdf] guess fail: {e}"); return None; }
+    };
+    let dyn_img = match reader.decode() {
+        Ok(d) => d,
+        Err(e) => { eprintln!("[export_pdf] decode fail: {e}"); return None; }
+    };
+    let px_w = dyn_img.width() as f32;
+    let px_h = dyn_img.height() as f32;
+    let img = Image::from_dynamic_image(&dyn_img);
+    let dpi: f32 = 300.0;
+    let mm_w = px_w / dpi * 25.4;
+    let mm_h = px_h / dpi * 25.4;
+    let scale = if mm_w > max_w_mm { max_w_mm / mm_w } else { 1.0 };
+    let final_h = mm_h * scale;
+    img.add_to_layer(
+        layer.clone(),
+        ImageTransform {
+            translate_x: Some(x),
+            translate_y: Some(Mm(top_y.0 - final_h)),
+            scale_x: Some(scale),
+            scale_y: Some(scale),
+            dpi: Some(dpi),
+            ..Default::default()
+        },
+    );
+    eprintln!("[export_pdf] embedded {}x{}px scale={:.3} h={:.1}mm", px_w, px_h, scale, final_h);
+    Some(final_h)
+}
+
 fn export_pdf(nodes: &[ExportNode], out: &Path) -> Result<(), String> {
     ensure_parent(out)?;
     let (doc, page1, layer1) =
@@ -353,6 +395,18 @@ fn export_pdf(nodes: &[ExportNode], out: &Path) -> Result<(), String> {
         if !n.parent.is_empty() {
             current.use_text(format!("parent: {}", n.parent), 9.0, left, y, &body_font);
             y = Mm(y.0 - line.0);
+        }
+        if !n.image.is_empty() && Path::new(&n.image).exists() {
+            let max_w: f32 = 80.0;
+            // estimate height before placing so we can page-break
+            let est_h: f32 = 60.0;
+            if y.0 - est_h < bottom.0 {
+                current = new_page(&doc);
+                y = top;
+            }
+            if let Some(h) = embed_png(&current, &n.image, left, y, max_w) {
+                y = Mm(y.0 - h - 4.0);
+            }
         }
         for ln in wrap(&n.body, 95) {
             if y.0 < bottom.0 {
