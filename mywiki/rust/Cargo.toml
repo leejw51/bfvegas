@@ -1,0 +1,19 @@
+[package]
+name = "mywiki_ai"
+version = "0.1.0"
+edition = "2021"
+
+[lib]
+name = "mywiki_ai"
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+ureq = { version = "2", features = ["json", "tls"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+printpdf = "0.7"
+
+[profile.release]
+opt-level = 3
+lto = "thin"
+strip = true

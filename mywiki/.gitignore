@@ -1,0 +1,9 @@
+.DS_Store
+*.love
+assets/raw/
+__pycache__/
+*.pyc
+data/
+*.so
+*.swp
+assets/nodes/
