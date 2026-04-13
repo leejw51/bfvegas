@@ -2,8 +2,6 @@
 
 A visual AI knowledge mindmap built with LÖVE2D (Lua) and a Rust native library. MyWiki lets you grow, explore, and export interactive mindmaps with AI-assisted node generation.
 
-Demo: https://youtu.be/6XmPcPOZSl4
-
 ## Introduction
 
 MyWiki is a desktop app for building knowledge graphs as visual mindmaps. Nodes can be created manually or expanded automatically with AI (via Grok), letting you brainstorm and explore topics interactively. The UI is rendered in LÖVE2D for smooth, zoomable canvases, while heavy lifting (AI requests, FFI-backed utilities) runs in a Rust cdylib loaded through LuaJIT FFI.
@@ -43,4 +41,4 @@ Run `make` (or `make help`) for the full menu.
 
 ## Demo
 
-Watch it in action: https://youtu.be/6XmPcPOZSl4
+[![MyWiki Demo](https://img.youtube.com/vi/6XmPcPOZSl4/0.jpg)](https://youtu.be/6XmPcPOZSl4)
